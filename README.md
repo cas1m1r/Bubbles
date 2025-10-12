@@ -39,12 +39,12 @@ Additional options:
 ```
 Bubble/
 ├── sandbox/
-│   ├── seccomp_launcher.c    # Enhanced C launcher with permission flags
-│   ├── test_violations.c     # Test binary
-│   ├── Makefile
-│   └── test.sh               # Comprehensive test suite
-└── orchestrator/
-    ├── app.py                # Flask backend with permission support
+    ├── seccomp_launcher.c    # Enhanced C launcher with permission flags
+    ├── test_violations.c     # Test binary
+    ├── Makefile
+    └── test.sh               # Comprehensive test suite
+    ├── orchestrator/
+    └── app.py                # Flask backend with permission support
     ├── templates/
     │   └── index.html        # Modern web UI
     ├── uploads/              # Uploaded binaries
