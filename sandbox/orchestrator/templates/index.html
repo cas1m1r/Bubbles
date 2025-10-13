@@ -163,40 +163,54 @@
   }
 
   function renderViolations(alerts) {
-    const container = $("violations");
-    const violations = (alerts || []).filter(a =>
-      a.type === "policy.alert" ||
-      a.reason === "trap" || a.reason === "errno" ||
-      (a.message && a.message.includes("killed by signal"))
-    );
-    if (violations.length === 0) {
-      container.innerHTML = '<div class="alert-success">✅ No security violations detected</div>';
-      return;
-    }
-    container.innerHTML = violations.map(v => {
-      const syscall = v.syscall || "unknown";
-      const reason  = v.reason || "violation";
-      const time = (v.ts || "").split("T")[1]?.split(".")[0] || "";
-      const parts = [];
-      if (v.path)   parts.push(`Path: <code>${v.path}</code>`);
-      if (v.flags)  parts.push(`Flags: <code>${v.flags}</code>`);
-      if (v.domain) parts.push(`Domain: <code>${v.domain}</code>`);
-      if (v.peer)   parts.push(`Peer: <code>${v.peer}</code>`);
-      if (v.port !== undefined && v.port !== -1) parts.push(`Port: <code>${v.port}</code>`);
-      if (v.denied) parts.push(`Result: <code>${v.denied}</code>`);
-      return `
-        <div class="violation-card">
-          <div class="violation-header">
-            <span class="violation-syscall">${syscall}</span>
-            <span class="violation-time">${time}</span>
-          </div>
-          <div class="violation-details">
-            <strong>Reason:</strong> ${reason}<br>
-            ${parts.join(" • ")}
-          </div>
-        </div>`;
-    }).join("");
-  }
+	  const container = $("violations");
+
+	  // Allow structured policy alerts OR synthesize from stderr text
+	  const maybeViolation = (ev) => {
+		if (!ev) return false;
+		if (ev.type === "policy.alert") return true;
+		if (ev.reason === "trap" || ev.reason === "errno") return true;
+		if (ev.type === "sandbox.msg" && typeof ev.message === "string") {
+		  // Heuristics for your launcher’s messages
+		  return /EPERM|Operation not permitted|denied|Function not implemented/i.test(ev.message);
+		}
+		return false;
+	  };
+
+	  const violations = (alerts || []).filter(maybeViolation);
+
+	  if (violations.length === 0) {
+		container.innerHTML = '<div class="alert-success">✅ No security violations detected</div>';
+		return;
+	  }
+
+	  container.innerHTML = violations.map(v => {
+		const syscall = v.syscall || "unknown";
+		const reason  = v.reason || (v.type === "sandbox.msg" ? "errno" : "violation");
+		const time = (v.ts || "").split("T")[1]?.split(".")[0] || "";
+		const parts = [];
+		if (v.path)   parts.push(`Path: <code>${v.path}</code>`);
+		if (v.flags)  parts.push(`Flags: <code>${v.flags}</code>`);
+		if (v.domain) parts.push(`Domain: <code>${v.domain}</code>`);
+		if (v.peer)   parts.push(`Peer: <code>${v.peer}</code>`);
+		if (v.port !== undefined && v.port !== -1) parts.push(`Port: <code>${v.port}</code>`);
+		if (v.denied) parts.push(`Result: <code>${v.denied}</code>`);
+		if (v.type === "sandbox.msg" && v.message) parts.push(`Msg: <code>${v.message}</code>`);
+
+		return `
+		  <div class="violation-card">
+			<div class="violation-header">
+			  <span class="violation-syscall">${syscall}</span>
+			  <span class="violation-time">${time}</span>
+			</div>
+			<div class="violation-details">
+			  <strong>Reason:</strong> ${reason}<br>
+			  ${parts.join(" • ")}
+			</div>
+		  </div>`;
+	  }).join("");
+	}
+
 
   function renderAlerts(alerts) {
     const container = $("alerts");
@@ -204,6 +218,10 @@
       container.innerHTML = '<div class="empty-state">No events recorded</div>';
       return;
     }
+	let colorClass = "info";
+	if (String(type).includes("alert") || String(type).includes("trap")) colorClass = "danger";
+	else if (type === "fs.drop") colorClass = "warning";
+	else if (String(type).includes("spawn") || String(type).includes("exit")) colorClass = "warning";
     container.innerHTML = alerts.map(ev => {
       const type = ev.type || ev.reason || "event";
       const time = (ev.ts || "").split("T")[1]?.split(".")[0] || "";
@@ -222,28 +240,42 @@
   }
 
   function renderSummary(data) {
-    const exitCode = data.exit_code ?? "?";
-    const signal = data.term_signal;
-    let status = "success";
-    let statusText = "Completed";
-    if (signal) { status = "blocked"; statusText = `Killed by signal ${signal}`; }
-    else if (exitCode !== 0) { status = "error"; statusText = `Exit code ${exitCode}`; }
-    $("summary").innerHTML = `
-      <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;">
-        <span class="status-badge status-${status}">${statusText}</span>
-        <div class="chip"><strong>Command:</strong> <code>${(data.command || []).join(" ")}</code></div>
-        <div class="chip"><strong>Duration:</strong> ${data.duration_s}s</div>
-        <div class="chip"><strong>Max RSS:</strong> ${data.max_rss_kb} KB</div>
-        <div class="chip"><strong>Mode:</strong> ${data.mode || ""}</div>
-      </div>`;
-    $("ids").innerHTML = `
-      <div style="display:flex;flex-wrap:wrap;gap:8px;">
-        <div class="chip"><strong>Sample ID:</strong> <code>${data.sample_id || ""}</code></div>
-        <div class="chip"><strong>Run ID:</strong> <code>${data.run_id || ""}</code></div>
-        <div class="chip"><strong>Artifact:</strong> <code>${data.stdout_artifact_id || ""}</code></div>
-        ${data.offline ? '<div class="chip" style="border-color: var(--warning);">⚠️ Offline mode</div>' : ''}
-      </div>`;
-  }
+	  const exitCode = data.exit_code ?? "?";
+	  const status = exitCode === 0 ? "success" : "error";
+	  const statusText = exitCode === 0 ? "Completed" : `Exit code ${exitCode}`;
+
+	  const drops = Array.isArray(data.dropped_files) ? data.dropped_files : [];
+
+	  $("summary").innerHTML = `
+		<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;">
+		  <span class="status-badge status-${status}">${statusText}</span>
+		  <div class="chip"><strong>Command:</strong> <code>${(data.command || []).join(" ")}</code></div>
+		  <div class="chip"><strong>Duration:</strong> ${data.duration_s}s</div>
+		  <div class="chip"><strong>Max RSS:</strong> ${data.max_rss_kb} KB</div>
+		  ${drops.length ? `<div class="chip"><strong>Dropped Files:</strong> ${drops.length}</div>` : ""}
+		</div>
+		${drops.length ? `
+		  <div style="margin-top:10px;">
+			<h4 style="margin:6px 0;">🧾 Dropped Files</h4>
+			<div style="display:flex;flex-wrap:wrap;gap:6px;">
+			  ${drops.map(f => `
+				<div class="chip">
+				  <code>${f.name}</code>
+				  <span style="opacity:.8;">(${f.size} bytes)</span>
+				  <span style="opacity:.6;">${(f.sha256 || "").slice(0,12)}…</span>
+				</div>`).join("")}
+			</div>
+		  </div>` : ""}
+	  `;
+
+	  $("ids").innerHTML = `
+		<div style="display:flex;flex-wrap:wrap;gap:8px;">
+		  <div class="chip"><strong>Sample ID:</strong> <code>${data.sample_id || ""}</code></div>
+		  <div class="chip"><strong>Run ID:</strong> <code>${data.run_id || ""}</code></div>
+		  <div class="chip"><strong>Artifact:</strong> <code>${data.stdout_artifact_id || ""}</code></div>
+		  ${data.offline ? '<div class="chip" style="border-color: var(--warning);">⚠️ Offline mode</div>' : ''}
+		</div>`;
+	}
 
   window.addEventListener("DOMContentLoaded", () => {
     console.log("[ui] DOM ready");

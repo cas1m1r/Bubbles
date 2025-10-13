@@ -146,12 +146,13 @@ def spawn_and_observe(
 ):
     # Resolve CWD / metadata
     run_cwd = str(cwd) if cwd else None
+    
     filename = cmd_argv[0] if cmd_argv else None
 
     # Create sample/run up front so we can emit events immediately
     sample_id, run_id = create_sample_and_run(os.path.basename(filename) if filename else None)
     start_ts = now_iso()
-    
+
     emit_event(sample_id, run_id, {
         "type": "process.spawn",
         "action": "launcher.start",
@@ -180,18 +181,29 @@ def spawn_and_observe(
     t0 = time.time()
     proc = Popen(args, stdout=PIPE, stderr=PIPE, text=True, bufsize=1, cwd=run_cwd)
     alerts: list[dict] = []
-    files_dropped = []
-    initial_file_set = os.listdir(run_cwd)
     max_rss_kb = 0
     stdout_buf: list[str] = []
     stop = False
     timed_out = False
 
+    # NEW: snapshot cwd (robust even if cwd=None)
+    cwd_path = Path(run_cwd or os.getcwd())
+    try:
+        initial_file_set = set(os.listdir(cwd_path))
+    except Exception:
+        initial_file_set = set()
+
+    def read_status_rss_kb_local(pid):
+        try:
+            return read_status_rss_kb(pid)
+        except Exception:
+            return None
+
     # sample RSS
     def sampler():
         nonlocal max_rss_kb
         while not stop and proc.poll() is None:
-            rss = read_status_rss_kb(proc.pid)
+            rss = read_status_rss_kb_local(proc.pid)
             if rss and rss > max_rss_kb:
                 max_rss_kb = rss
             time.sleep(0.05)
@@ -213,7 +225,7 @@ def spawn_and_observe(
             if s.startswith("{") and s.endswith("}"):
                 try:
                     j = json.loads(s)
-                    emit_event(sample_id, run_id, j)  # pass through as-is for rich UI
+                    emit_event(sample_id, run_id, j)
                     alerts.append(j)
                     continue
                 except json.JSONDecodeError:
@@ -253,12 +265,46 @@ def spawn_and_observe(
     for t in threads:
         t.join(timeout=0.3)
     duration_s = time.time() - t0
-    # look for dropped files 
-    for file in os.listdir(run_cwd):
-        if file not in initial_file_set:
-            files_dropped.append(file)
+
+    # ---------- NEW: detect dropped files with metadata ----------
+    dropped_files = []
+    try:
+        final_set = set(os.listdir(cwd_path))
+        new_files = sorted(final_set - initial_file_set)
+        for name in new_files:
+            p = cwd_path / name
+            try:
+                if p.is_file():
+                    dropped_files.append({
+                        "name": name,
+                        "size": p.stat().st_size,
+                        "sha256": sha256_hex(p),
+                    })
+            except Exception:
+                # best-effort; skip unreadable files
+                pass
+    except Exception:
+        pass
+
+    if dropped_files:
+        ev = {
+            "type": "fs.drop",
+            "cwd": str(cwd_path),
+            "count": len(dropped_files),
+            "files": dropped_files,
+            "ts": now_iso(),
+        }
+        emit_event(sample_id, run_id, ev)
+        alerts.append(ev)
+
     if timed_out:
-        ev = {"type": "sandbox.msg", "action": "timeout", "message": f"terminated after {timeout_s}s", "ts": now_iso(), 'dropped_files': dropped_files}
+        ev = {
+            "type": "sandbox.msg",
+            "action": "timeout",
+            "message": f"terminated after {timeout_s}s",
+            "ts": now_iso(),
+            "dropped_files": dropped_files,
+        }
         emit_event(sample_id, run_id, ev)
         alerts.append(ev)
 
@@ -295,7 +341,10 @@ def spawn_and_observe(
         "stdout_artifact_id": art_id,
         "offline": (not BUBBLE_API),
         "mode": "deny-with-EPERM-continue",
+        # NEW: bubble up to the UI
+        "dropped_files": dropped_files,
     }
+
 
 # ---------- routes ----------
 @app.get("/")
