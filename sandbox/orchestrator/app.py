@@ -6,43 +6,58 @@ from pathlib import Path
 from flask import Flask, request, jsonify, render_template
 import requests
 
-BASE_DIR   = Path(__file__).resolve().parent
-UPLOAD_DIR = BASE_DIR / "uploads"
-ART_DIR    = BASE_DIR / "artifacts"
-OFFLINE_DIR= BASE_DIR / "offline"
-for d in (UPLOAD_DIR, ART_DIR, OFFLINE_DIR): d.mkdir(parents=True, exist_ok=True)
+# ---------- paths & config ----------
+BASE_DIR    = Path(__file__).resolve().parent
+TEMPLATES   = BASE_DIR / "templates"
+UPLOAD_DIR  = BASE_DIR / "uploads"
+ART_DIR     = BASE_DIR / "artifacts"
+OFFLINE_DIR = BASE_DIR / "offline"
+for d in (UPLOAD_DIR, ART_DIR, OFFLINE_DIR):
+    d.mkdir(parents=True, exist_ok=True)
 
-LAUNCHER   = os.environ.get("SANDBOX_LAUNCHER", str((BASE_DIR / ".." / "sandbox" / "seccomp_launcher").resolve()))
-BUBBLE_API = os.environ.get("BUBBLE_API")  # if None/empty => offline mode
+# Path to compiled launcher
+LAUNCHER = os.environ.get(
+    "SANDBOX_LAUNCHER",
+    str((BASE_DIR / ".." / "sandbox" / "seccomp_launcher").resolve())
+)
+
+# Optional: push events to a backend timeline (leave unset to run fully offline)
+BUBBLE_API = os.environ.get("BUBBLE_API")
 HOST_ID    = os.uname().nodename or "bubble-orchestrator"
 
-app = Flask(__name__)
+app = Flask(__name__, template_folder=str(TEMPLATES))
 
-def now_iso(): return datetime.now(timezone.utc).isoformat()
-def uu(): return str(uuid.uuid4())
+# ---------- helpers ----------
+def now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+def uu() -> str:
+    return str(uuid.uuid4())
 
 def sha256_hex(p: Path) -> str:
     h = hashlib.sha256()
     with p.open("rb") as f:
-        for chunk in iter(lambda: f.read(8192), b""): h.update(chunk)
+        for chunk in iter(lambda: f.read(8192), b""):
+            h.update(chunk)
     return h.hexdigest()
 
 def read_status_rss_kb(pid: int):
     try:
         with open(f"/proc/{pid}/status","r") as f:
             for line in f:
-                if line.startswith("VmRSS:"): return int(line.split()[1])
+                if line.startswith("VmRSS:"):
+                    return int(line.split()[1])
     except Exception:
         return None
 
-# ---------- ingestion: best-effort ----------
+# ---------- offline event sink (if no API) ----------
 def _offline_append(kind: str, doc: dict):
     path = OFFLINE_DIR / f"{kind}.ndjson"
     with path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(doc) + "\n")
 
 def bubble_post(path: str, payload: dict):
-    """Return dict; if API unavailable, persist locally and return {'offline':True}."""
+    """Return dict; if API unavailable, persist locally."""
     base = (BUBBLE_API or "").strip()
     if not base:
         _offline_append(path.strip("/").replace("/","_"), payload)
@@ -62,7 +77,7 @@ def emit_event(sample_id: str, run_id: str, ev: dict):
         "sample_id": sample_id,
         "run_id": run_id,
         "host_id": HOST_ID,
-        "timestamp": ev.get("timestamp") or now_iso(),
+        "timestamp": ev.get("timestamp") or ev.get("ts") or now_iso(),
         "event": ev,
         "context": {"labels":["orchestrator","seccomp"], "tags":[ev.get("type","")], "operator":"orchestrator@local"},
         "meta": {"ingested_by":"orchestrator.flask","raw_source":"stderr/json"}
@@ -87,7 +102,10 @@ def create_sample_and_run(filename: str | None):
         "start_ts": now_iso(),
         "status": "running"
     })
-    (BASE_DIR.parent / ".last_run.json").write_text(json.dumps({"sample_id": sample_id, "run_id": run_id}, indent=2))
+    (BASE_DIR / ".last_run.json").write_text(
+        json.dumps({"sample_id": sample_id, "run_id": run_id}, indent=2),
+        encoding="utf-8"
+    )
     return sample_id, run_id
 
 def finalize_run(run_id: str, sample_id: str, verdict: str | None, start_ts: str):
@@ -104,7 +122,7 @@ def finalize_run(run_id: str, sample_id: str, verdict: str | None, start_ts: str
 def register_artifact(sample_id: str, run_id: str, p: Path, kind: str):
     artifact_id = uu()
     checksum = f"sha256:{sha256_hex(p)}"
-    rel = str(p.relative_to(BASE_DIR.parent))
+    rel = str(p.relative_to(BASE_DIR))
     bubble_post("/v1/artifacts", {
         "artifact_id": artifact_id,
         "sample_id": sample_id,
@@ -116,156 +134,179 @@ def register_artifact(sample_id: str, run_id: str, p: Path, kind: str):
     })
     return artifact_id
 
-def spawn_and_observe(cmd_argv, mode="trap", diagnose=False, pidns=False, 
-                      log_errno=False, notify_exec=False, log_continue=False,
-                      permissions=None, cwd: Path | None=None):
-    """
-    Enhanced spawning with permission controls.
-    permissions: dict with keys: fs_read, fs_write, network, exec (all bool)
-    """
+# ---------- core runner ----------
+def spawn_and_observe(
+    cmd_argv,
+    diagnose: bool = False,
+    pidns: bool = False,
+    notify_exec: bool = True,
+    permissions: dict | None = None,
+    cwd: Path | None = None,
+    timeout_s: int = 10,
+):
+    # Resolve CWD / metadata
     run_cwd = str(cwd) if cwd else None
-    perms = permissions or {}
-
     filename = cmd_argv[0] if cmd_argv else None
+
+    # Create sample/run up front so we can emit events immediately
     sample_id, run_id = create_sample_and_run(os.path.basename(filename) if filename else None)
     start_ts = now_iso()
 
     emit_event(sample_id, run_id, {
-        "type":"process.spawn","action":"launcher.start",
-        "cmdline":" ".join(cmd_argv),"cwd": run_cwd or os.getcwd(),"exe": filename,
-        "permissions": perms
+        "type": "process.spawn",
+        "action": "launcher.start",
+        "cmdline": " ".join(cmd_argv),
+        "cwd": run_cwd or os.getcwd(),
+        "exe": filename
     })
 
+    # ---------- build launcher argv ----------
+    perms = permissions or {}
+    fs_write = bool(perms.get("fs_write", False))   # checked => allow write
+    net_ok   = bool(perms.get("network", False))    # checked => allow net
+
     args = [LAUNCHER]
-    if pidns: args.append("--pidns")
-    if diagnose: args.append("--diagnose")
-    if mode in ("trap","errno"): args.append(f"--mode={mode}")
-    if log_errno: args.append("--log-errno")
-    if notify_exec: args.append("--notify-exec")
-    if log_continue: args.append("--log-continue")
-    
-    # Permission flags
-    if perms.get("fs_write"): args.append("--allow-fs-write")
-    if perms.get("network"): args.append("--allow-network")
-    
+    args += [f"--deny-fs={'0' if fs_write else '1'}"]
+    args += [f"--deny-net={'0' if net_ok   else '1'}"]
+    if notify_exec:
+        args.append("--notify-exec")
+    if pidns:
+        args.append("--pidns")
+    if diagnose:
+        args.append("--diagnose")
     args += ["--"] + cmd_argv
 
+    # ---------- spawn & observers ----------
     t0 = time.time()
     proc = Popen(args, stdout=PIPE, stderr=PIPE, text=True, bufsize=1, cwd=run_cwd)
-    alerts, max_rss_kb = [], 0
-    viol_lines = []
+    alerts: list[dict] = []
+    max_rss_kb = 0
+    stdout_buf: list[str] = []
+    stop = False
+    timed_out = False
 
-    stop=False
+    # sample RSS
     def sampler():
         nonlocal max_rss_kb
         while not stop and proc.poll() is None:
             rss = read_status_rss_kb(proc.pid)
-            if rss and rss > max_rss_kb: max_rss_kb = rss
+            if rss and rss > max_rss_kb:
+                max_rss_kb = rss
             time.sleep(0.05)
-    threading.Thread(target=sampler, daemon=True).start()
 
-    for line in proc.stderr:
-        line=line.strip()
-        if not line: continue
-        ts=now_iso()
-        if line.startswith("{") and line.endswith("}"):
-            try: j=json.loads(line)
-            except json.JSONDecodeError: j={"type":"policy.alert.raw","line":line,"ts":ts}
-            
-            # Build structured event
-            ev={"type": j.get("type", "policy.alert"),
-                "action": j.get("reason") or j.get("type") or "violation",
-                "notes": line}
-            if "syscall" in j: ev["syscall"] = j["syscall"]
-            if "path" in j:    ev["path"] = j["path"]
-            if "flags" in j:   ev["flags"] = j["flags"]
-            
+    # stream stdout
+    def read_stdout():
+        if not proc.stdout: return
+        for line in iter(proc.stdout.readline, ""):
+            stdout_buf.append(line)
+
+    # stream stderr and parse events here (so main never blocks on it)
+    def read_stderr():
+        if not proc.stderr: return
+        for line in iter(proc.stderr.readline, ""):
+            s = line.strip()
+            if not s:
+                continue
+            ts = now_iso()
+            if s.startswith("{") and s.endswith("}"):
+                try:
+                    j = json.loads(s)
+                    emit_event(sample_id, run_id, j)  # pass through as-is for rich UI
+                    alerts.append(j)
+                    continue
+                except json.JSONDecodeError:
+                    pass
+            ev = {"type": "sandbox.msg", "action": "stderr", "message": s, "ts": ts}
             emit_event(sample_id, run_id, ev)
-            alerts.append(j)
+            alerts.append(ev)
 
-            # Human-readable violation line
-            reason = j.get("reason","violation")
-            sc = j.get("syscall")
-            p  = j.get("path")
-            extras=[]
-            if "flags" in j: extras.append(f"flags={j['flags']}")
-            if "mode"  in j: extras.append(f"mode={j['mode']}")
-            if "domain" in j: extras.append(f"domain={j['domain']}")
-            if "type" in j and j.get("category") == "net":
-                extras.append(f"type={j.get('type')}")
-            
-            line_hr = f"[BLOCKED] {reason}"
-            if sc: line_hr += f" syscall={sc}"
-            if p: line_hr += f" path={p}"
-            if extras: line_hr += " " + " ".join(extras)
-            viol_lines.append(line_hr)
+    # watchdog timeout
+    def watchdog():
+        nonlocal timed_out
+        while not stop and proc.poll() is None:
+            if time.time() - t0 > timeout_s:
+                timed_out = True
+                try:
+                    proc.terminate()
+                    for _ in range(20):
+                        if proc.poll() is not None:
+                            break
+                        time.sleep(0.05)
+                    if proc.poll() is None:
+                        proc.kill()
+                finally:
+                    break
+            time.sleep(0.1)
 
-        else:
-            # Non-JSON lines (sandbox messages)
-            emit_event(sample_id, run_id, {"type":"operator.action","action":"sandbox.msg","notes": line})
-            alerts.append({"type":"sandbox.msg","message":line,"ts":ts})
-            if "child killed by signal" in line or "sandbox]" in line:
-                viol_lines.append(line)
+    threads = [
+        threading.Thread(target=sampler, daemon=True),
+        threading.Thread(target=read_stdout, daemon=True),
+        threading.Thread(target=read_stderr, daemon=True),
+        threading.Thread(target=watchdog, daemon=True),
+    ]
+    [t.start() for t in threads]
 
-    # Read stdout
-    stdout_text = proc.stdout.read() if proc.stdout else ""
-    rc = proc.wait(); stop=True
-    duration_s = time.time()-t0
+    rc = proc.wait()
+    stop = True
+    for t in threads:
+        t.join(timeout=0.3)
+    duration_s = time.time() - t0
 
-    # Detect termination signal
-    term_signal=None
-    for a in reversed(alerts):
-        if a.get("type")=="sandbox.msg" and "child killed by signal" in a.get("message",""):
-            try: term_signal=int(a["message"].split()[-1])
-            except: pass
-            break
+    if timed_out:
+        ev = {"type": "sandbox.msg", "action": "timeout", "message": f"terminated after {timeout_s}s", "ts": now_iso()}
+        emit_event(sample_id, run_id, ev)
+        alerts.append(ev)
 
-    # Save stdout artifact
+    # ---------- artifacts & finalize ----------
+    stdout_text = "".join(stdout_buf)
     out_path = ART_DIR / f"{run_id}.stdout.txt"
     out_path.write_text(stdout_text, encoding="utf-8")
     art_id = register_artifact(sample_id, run_id, out_path, "stdout")
-    stdout_from_art = out_path.read_text(encoding="utf-8", errors="replace")
 
-    # Append violation summary to stdout view
-    stdout_view = stdout_from_art
-    if viol_lines:
-        stdout_view += ("\n\n=== Security Policy Violations ===\n" + "\n".join(viol_lines))
+    emit_event(sample_id, run_id, {
+        "type": "process.exit",
+        "action": "launcher.end",
+        "duration_ms": int(duration_s * 1000),
+        "notes": f"exit={rc} max_rss_kb={max_rss_kb}"
+    })
 
-    emit_event(sample_id, run_id, {"type":"process.exit","action":"launcher.end",
-        "duration_ms": int(duration_s*1000),
-        "exit_code": rc,
-        "term_signal": term_signal,
-        "max_rss_kb": max_rss_kb})
-    
-    verdict = "blocked" if term_signal else ("clean" if rc==0 else "error")
+    verdict = ("ok" if rc == 0 else "violation" if alerts else "unknown")
     finalize_run(run_id, sample_id, verdict, start_ts)
 
     return {
-        "sample_id": sample_id, "run_id": run_id,
-        "command": cmd_argv, "launcher": LAUNCHER,
-        "start_ts": start_ts, "end_ts": now_iso(),
-        "duration_s": round(duration_s,6), "exit_code": rc, "term_signal": term_signal,
-        "max_rss_kb": max_rss_kb, "alerts": alerts,
-        "stdout": stdout_view,
-        "mode": mode, "diagnose": diagnose, "pidns": pidns,
-        "log_errno": log_errno, "notify_exec": notify_exec, "log_continue": log_continue,
-        "permissions": perms,
+        "sample_id": sample_id,
+        "run_id": run_id,
+        "command": cmd_argv,
+        "launcher": LAUNCHER,
+        "start_ts": start_ts,
+        "end_ts": now_iso(),
+        "duration_s": round(duration_s, 6),
+        "exit_code": rc,
+        "max_rss_kb": max_rss_kb,
+        "alerts": alerts,
+        "stdout": stdout_text,
+        "diagnose": diagnose,
+        "pidns": pidns,
         "stdout_artifact_id": art_id,
-        "offline": (not BUBBLE_API)
+        "offline": (not BUBBLE_API),
+        "mode": "deny-with-EPERM-continue",
     }
 
-
+# ---------- routes ----------
 @app.get("/")
-def index(): return render_template("index.html")
+def index():
+    return render_template("index.html")
 
 @app.post("/upload")
 def upload():
     f = request.files.get("file")
-    if not f: return jsonify({"error":"no file"}), 400
+    if not f:
+        return jsonify({"error":"no file"}), 400
     dest = (UPLOAD_DIR / os.path.basename(f.filename))
-    f.save(dest); os.chmod(dest, 0o755)
+    f.save(dest)
+    os.chmod(dest, 0o755)
 
-    # Shebang sniff
+    # shebang sniff (optional interpreter hint)
     interpreter = ""
     try:
         with dest.open("rb") as fh:
@@ -280,35 +321,45 @@ def upload():
 def run():
     data = request.get_json(force=True)
 
-    # Extract permissions
-    perms = data.get("permissions", {})
-    
-    # Common parameters
-    common_params = {
-        "mode": data.get("mode", "trap"),
-        "diagnose": bool(data.get("diagnose", False)),
-        "pidns": bool(data.get("pidns", False)),
-        "log_errno": bool(data.get("log_errno", False)),
-        "notify_exec": bool(data.get("notify_exec", False)),
-        "log_continue": bool(data.get("log_continue", False)),
-        "permissions": perms
-    }
+    # Common knobs from UI
+    notify_exec = bool(data.get("notify_exec", True))
+    diagnose    = bool(data.get("diagnose", False))
+    pidns       = bool(data.get("pidns", False))
+    permissions = data.get("permissions") or {}
 
+    # Uploaded file path?
     if data.get("uploaded_path"):
         upath = Path(data["uploaded_path"]).resolve()
         interp = (data.get("interpreter") or "").strip()
         extra  = shlex.split(data.get("args","")) if data.get("args") else []
         cmd_argv = ([interp, str(upath)] if interp else [str(upath)]) + extra
-        result = spawn_and_observe(cmd_argv, cwd=upath.parent, **common_params)
+        result = spawn_and_observe(
+            cmd_argv,
+            diagnose=diagnose,
+            pidns=pidns,
+            notify_exec=notify_exec,
+            permissions=permissions,
+            cwd=upath.parent
+        )
         return jsonify(result)
 
+    # Raw command
     cmd = data.get("cmd")
     if   isinstance(cmd, str):  cmd_argv = shlex.split(cmd)
     elif isinstance(cmd, list): cmd_argv = cmd
-    else: return jsonify({"error":"cmd must be string or list"}), 400
+    else:
+        return jsonify({"error":"cmd must be string or list"}), 400
 
-    result = spawn_and_observe(cmd_argv, cwd=None, **common_params)
+    result = spawn_and_observe(
+        cmd_argv,
+        diagnose=diagnose,
+        pidns=pidns,
+        notify_exec=notify_exec,
+        permissions=permissions,
+        cwd=None
+    )
     return jsonify(result)
 
 if __name__ == "__main__":
+    print(f"[orchestrator] LAUNCHER = {LAUNCHER}")
     app.run(host="0.0.0.0", port=8090, debug=True)

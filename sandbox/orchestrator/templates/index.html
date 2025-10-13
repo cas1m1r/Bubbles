@@ -5,261 +5,85 @@
   <title>Project Bubble — Sandbox Runner</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
-    :root { 
-      --bg:#0b0d10; 
-      --panel:#0f141b; 
-      --muted:#9ca3af; 
-      --border:#2b3440; 
-      --text:#e5e7eb;
-      --success:#10b981;
-      --warning:#f59e0b;
-      --danger:#ef4444;
-      --info:#3b82f6;
-    }
-    body { 
-      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; 
-      margin: 0; 
-      padding: 24px;
-      background: var(--bg); 
-      color: var(--text); 
-    }
-    header { 
-      margin-bottom: 24px;
-      padding-bottom: 16px;
-      border-bottom: 1px solid var(--border);
-    }
-    .section { 
-      background: var(--panel); 
-      border: 1px solid var(--border); 
-      border-radius: 12px; 
-      padding: 20px; 
-      margin-bottom: 16px;
-    }
-    .section h3 { 
-      margin: 0 0 16px 0; 
-      font-size: 16px;
-      color: var(--text);
-    }
-    .row { 
-      display:flex; 
-      gap:12px; 
-      align-items:center; 
-      margin-bottom: 12px; 
-      flex-wrap: wrap; 
-    }
-    input, button, select, textarea { 
-      padding: 8px 12px; 
-      background:var(--bg); 
-      color:var(--text); 
-      border:1px solid var(--border); 
-      border-radius:8px;
-      font-size: 14px;
-    }
-    input[type="checkbox"] {
-      width: 18px;
-      height: 18px;
-      cursor: pointer;
-    }
-    button { 
-      cursor:pointer;
-      font-weight: 500;
-      transition: all 0.2s;
-    }
-    button:hover {
-      background: var(--border);
-    }
-    button.primary {
-      background: var(--info);
-      border-color: var(--info);
-    }
-    button.primary:hover {
-      opacity: 0.9;
-    }
-    code, pre { 
-      background:var(--bg); 
-      border:1px solid var(--border); 
-      border-radius:8px; 
-      padding:12px; 
-      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; 
-      font-size: 13px; 
-      white-space: pre-wrap; 
-      word-break: break-word;
-      line-height: 1.6;
-    }
-    .label { 
-      color: var(--muted); 
-      font-size: 13px;
-      display: flex;
-      align-items: center;
-      gap: 6px;
-    }
-    .chip { 
-      display:inline-flex; 
-      align-items:center; 
-      gap:8px; 
-      padding:6px 12px; 
-      border:1px solid var(--border); 
-      border-radius:8px; 
-      background:var(--bg); 
-      font-size: 13px;
-      margin: 4px 4px 4px 0;
-    }
-    .alert-box {
-      padding: 12px;
-      border-radius: 8px;
-      margin-bottom: 12px;
-      border-left: 4px solid;
-    }
-    .alert-danger { 
-      background: rgba(239, 68, 68, 0.1); 
-      border-left-color: var(--danger);
-      color: #fca5a5;
-    }
-    .alert-warning { 
-      background: rgba(245, 158, 11, 0.1); 
-      border-left-color: var(--warning);
-      color: #fcd34d;
-    }
-    .alert-info { 
-      background: rgba(59, 130, 246, 0.1); 
-      border-left-color: var(--info);
-      color: #93c5fd;
-    }
-    .alert-success { 
-      background: rgba(16, 185, 129, 0.1); 
-      border-left-color: var(--success);
-      color: #6ee7b7;
-    }
-    .violation-card {
-      background: var(--bg);
-      border: 1px solid var(--border);
-      border-left: 3px solid var(--danger);
-      padding: 12px;
-      margin-bottom: 8px;
-      border-radius: 6px;
-    }
-    .violation-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 8px;
-    }
-    .violation-syscall {
-      font-weight: 600;
-      color: var(--danger);
-      font-family: monospace;
-    }
-    .violation-time {
-      font-size: 12px;
-      color: var(--muted);
-    }
-    .violation-details {
-      font-size: 13px;
-      color: var(--muted);
-      line-height: 1.6;
-    }
-    .permission-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-      gap: 12px;
-    }
-    .permission-item {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      padding: 8px;
-      background: var(--bg);
-      border: 1px solid var(--border);
-      border-radius: 6px;
-    }
-    .status-badge {
-      padding: 4px 10px;
-      border-radius: 12px;
-      font-size: 12px;
-      font-weight: 500;
-    }
-    .status-running { background: var(--info); color: white; }
-    .status-blocked { background: var(--danger); color: white; }
-    .status-success { background: var(--success); color: white; }
-    .status-error { background: var(--warning); color: white; }
-    .grid-2 {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 16px;
-    }
-    @media (max-width: 900px) { 
-      .grid-2 { grid-template-columns: 1fr; } 
-    }
-    .empty-state {
-      text-align: center;
-      padding: 40px;
-      color: var(--muted);
-    }
+    :root { --bg:#0b0d10; --panel:#0f141b; --muted:#9ca3af; --border:#2b3440; --text:#e5e7eb;
+            --success:#10b981; --warning:#f59e0b; --danger:#ef4444; --info:#3b82f6; }
+    body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin:0; padding:24px; background:var(--bg); color:var(--text); }
+    header { margin-bottom:24px; padding-bottom:16px; border-bottom:1px solid var(--border); }
+    .section { background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:20px; margin-bottom:16px; }
+    .section h3 { margin:0 0 16px 0; font-size:16px; color:var(--text); }
+    .row { display:flex; gap:12px; align-items:center; margin-bottom:12px; flex-wrap:wrap; }
+    input, button, select, textarea { padding:8px 12px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:8px; font-size:14px; }
+    input[type="checkbox"] { width:18px; height:18px; cursor:pointer; }
+    button { cursor:pointer; font-weight:500; transition:all .2s; }
+    button:hover { background:var(--border); }
+    button.primary { background:var(--info); border-color:var(--info); }
+    button.primary:hover { opacity:.9; }
+    code, pre { background:var(--bg); border:1px solid var(--border); border-radius:8px; padding:12px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:13px; white-space:pre-wrap; word-break:break-word; line-height:1.6; }
+    .label { color:var(--muted); font-size:13px; display:flex; align-items:center; gap:6px; }
+    .chip { display:inline-flex; align-items:center; gap:8px; padding:6px 12px; border:1px solid var(--border); border-radius:8px; background:var(--bg); font-size:13px; margin:4px 4px 4px 0; }
+    .alert-box { padding:12px; border-radius:8px; margin-bottom:12px; border-left:4px solid; }
+    .alert-danger { background:rgba(239,68,68,.1); border-left-color:var(--danger); color:#fca5a5; }
+    .alert-warning { background:rgba(245,158,11,.1); border-left-color:var(--warning); color:#fcd34d; }
+    .alert-info { background:rgba(59,130,246,.1); border-left-color:var(--info); color:#93c5fd; }
+    .alert-success { background:rgba(16,185,129,.1); border-left-color:var(--success); color:#6ee7b7; }
+    .violation-card { background:var(--bg); border:1px solid var(--border); border-left:3px solid var(--danger); padding:12px; margin-bottom:8px; border-radius:6px; }
+    .violation-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; }
+    .violation-syscall { font-weight:600; color:var(--danger); font-family:monospace; }
+    .violation-time { font-size:12px; color:var(--muted); }
+    .violation-details { font-size:13px; color:var(--muted); line-height:1.6; }
+    .permission-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:12px; }
+    .permission-item { display:flex; align-items:center; gap:8px; padding:8px; background:var(--bg); border:1px solid var(--border); border-radius:6px; }
+    .status-badge { padding:4px 10px; border-radius:12px; font-size:12px; font-weight:500; }
+    .status-running { background:var(--info); color:#fff; }
+    .status-blocked { background:var(--danger); color:#fff; }
+    .status-success { background:var(--success); color:#fff; }
+    .status-error { background:var(--warning); color:#fff; }
+    .grid-2 { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+    @media (max-width: 900px) { .grid-2 { grid-template-columns:1fr; } }
+    .empty-state { text-align:center; padding:40px; color:var(--muted); }
   </style>
 </head>
 <body>
   <header>
-    <h1 style="margin: 0 0 8px 0; font-size: 24px;">Project Bubble — Sandbox Runner</h1>
+    <h1 style="margin:0 0 8px 0; font-size:24px;">Project Bubble — Sandbox Runner</h1>
     <p class="label">Seccomp-based sandboxing with configurable policies</p>
   </header>
 
   <div class="section">
     <h3>🎯 Launch Configuration</h3>
-    
     <div class="row">
-      <input id="cmd" style="flex: 1; min-width: 300px;" placeholder="Command, e.g. /bin/echo hello or ./test_violations"/>
+      <input id="cmd" style="flex:1; min-width:300px;" placeholder="Command, e.g. /bin/echo hello or ./test_violations"/>
       <button id="run" class="primary">▶ Run Command</button>
     </div>
-
     <div class="row">
       <input type="file" id="file">
-      <input id="interpreter" placeholder="Interpreter (optional), e.g. /bin/sh" style="width: 180px;"/>
-      <input id="args" placeholder="Args (optional)" style="width: 200px;"/>
+      <input id="interpreter" placeholder="Interpreter (optional), e.g. /bin/sh" style="width:180px;"/>
+      <input id="args" placeholder="Args (optional)" style="width:200px;"/>
       <button id="uploadRun" class="primary">📤 Upload & Run</button>
     </div>
   </div>
 
   <div class="section">
     <h3>🔐 Sandbox Policy</h3>
-    
-    <div class="row" style="margin-bottom: 16px;">
-      <label class="label">
-        Mode:
-        <select id="mode">
-          <option value="trap">TRAP (kill on violation)</option>
-          <option value="errno">ERRNO (return error, continue)</option>
-        </select>
-      </label>
-      <label class="label">
-        <input type="checkbox" id="log_errno">
-        Log filesystem operations
-      </label>
-      <label class="label">
-        <input type="checkbox" id="notify_exec">
-        Log process spawns
-      </label>
-      <label class="label">
-        <input type="checkbox" id="log_continue">
-        Continue on trap
-      </label>
+    <div class="row" style="margin-bottom:8px;">
+      <span class="label">Behavior: <strong>deny with EPERM and continue</strong> (no TRAP)</span>
     </div>
-
     <div class="permission-grid">
       <div class="permission-item">
-        <input type="checkbox" id="perm_fs_read" checked>
-        <label for="perm_fs_read">📖 Filesystem Read</label>
+        <input type="checkbox" id="perm_fs_read" checked disabled>
+        <label for="perm_fs_read">📖 Filesystem Read (always allowed)</label>
       </div>
       <div class="permission-item">
         <input type="checkbox" id="perm_fs_write">
-        <label for="perm_fs_write">📝 Filesystem Write</label>
+        <label for="perm_fs_write">📝 Allow Filesystem Write (uncheck to deny)</label>
       </div>
       <div class="permission-item">
         <input type="checkbox" id="perm_network">
-        <label for="perm_network">🌐 Network Access</label>
+        <label for="perm_network">🌐 Allow Network (uncheck to deny)</label>
       </div>
       <div class="permission-item">
-        <input type="checkbox" id="perm_exec" checked>
-        <label for="perm_exec">⚙️ Process Execution</label>
+        <input type="checkbox" id="notify_exec" checked>
+        <label for="notify_exec">⚙️ Log Process Spawns</label>
       </div>
       <div class="permission-item">
         <input type="checkbox" id="pidns">
@@ -267,12 +91,12 @@
       </div>
       <div class="permission-item">
         <input type="checkbox" id="diagnose">
-        <label for="diagnose">🔍 Diagnostic Mode</label>
+        <label for="diagnose">🔍 Diagnostic logging (best-effort)</label>
       </div>
     </div>
   </div>
 
-  <div id="resultsContainer" style="display: none;">
+  <div id="resultsContainer" style="display:none;">
     <div class="section">
       <h3>⚠️ Security Violations</h3>
       <div id="violations"></div>
@@ -292,190 +116,160 @@
     <div class="section">
       <h3>📈 Execution Summary</h3>
       <div id="summary"></div>
-      <div id="ids" style="margin-top: 12px;"></div>
+      <div id="ids" style="margin-top:12px;"></div>
     </div>
   </div>
 
-  <script>
-    const $ = (id) => document.getElementById(id);
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  console.log("[ui] init");
 
-    async function runCommand(body) {
+  function buildRequestBody() {
+    return {
+      diagnose: $("diagnose")?.checked ?? false,
+      pidns: $("pidns")?.checked ?? false,
+      notify_exec: $("notify_exec")?.checked ?? false,
+      permissions: {
+        fs_write: $("perm_fs_write")?.checked ?? false,
+        network: $("perm_network")?.checked ?? false,
+      },
+    };
+  }
+
+  async function runCommand(body) {
+    try {
+      console.log("[ui] POST /run", body);
       $("resultsContainer").style.display = "none";
-      
       const res = await fetch("/run", {
-        method: "POST", 
-        headers: {"Content-Type": "application/json"}, 
-        body: JSON.stringify(body)
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
       });
       const data = await res.json();
+      console.log("[ui] /run response", data);
       renderResults(data);
+    } catch (e) {
+      alert("Request failed: " + e);
     }
+  }
+
+  function renderResults(data) {
+    $("resultsContainer").style.display = "block";
+    renderViolations(data.alerts || []);
+    $("stdout").textContent = data.stdout || "(no output)";
+    renderAlerts(data.alerts || []);
+    renderSummary(data);
+  }
+
+  function renderViolations(alerts) {
+    const container = $("violations");
+    const violations = (alerts || []).filter(a =>
+      a.type === "policy.alert" ||
+      a.reason === "trap" || a.reason === "errno" ||
+      (a.message && a.message.includes("killed by signal"))
+    );
+    if (violations.length === 0) {
+      container.innerHTML = '<div class="alert-success">✅ No security violations detected</div>';
+      return;
+    }
+    container.innerHTML = violations.map(v => {
+      const syscall = v.syscall || "unknown";
+      const reason  = v.reason || "violation";
+      const time = (v.ts || "").split("T")[1]?.split(".")[0] || "";
+      const parts = [];
+      if (v.path)   parts.push(`Path: <code>${v.path}</code>`);
+      if (v.flags)  parts.push(`Flags: <code>${v.flags}</code>`);
+      if (v.domain) parts.push(`Domain: <code>${v.domain}</code>`);
+      if (v.peer)   parts.push(`Peer: <code>${v.peer}</code>`);
+      if (v.port !== undefined && v.port !== -1) parts.push(`Port: <code>${v.port}</code>`);
+      if (v.denied) parts.push(`Result: <code>${v.denied}</code>`);
+      return `
+        <div class="violation-card">
+          <div class="violation-header">
+            <span class="violation-syscall">${syscall}</span>
+            <span class="violation-time">${time}</span>
+          </div>
+          <div class="violation-details">
+            <strong>Reason:</strong> ${reason}<br>
+            ${parts.join(" • ")}
+          </div>
+        </div>`;
+    }).join("");
+  }
+
+  function renderAlerts(alerts) {
+    const container = $("alerts");
+    if (!alerts || alerts.length === 0) {
+      container.innerHTML = '<div class="empty-state">No events recorded</div>';
+      return;
+    }
+    container.innerHTML = alerts.map(ev => {
+      const type = ev.type || ev.reason || "event";
+      const time = (ev.ts || "").split("T")[1]?.split(".")[0] || "";
+      let colorClass = "info";
+      if (String(type).includes("alert") || String(type).includes("trap")) colorClass = "danger";
+      else if (String(type).includes("spawn") || String(type).includes("exit")) colorClass = "warning";
+      return `
+        <div class="alert-box alert-${colorClass}">
+          <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
+            <strong>${type}</strong>
+            <span style="font-size:12px;opacity:.8;">${time}</span>
+          </div>
+          <pre style="margin:0;font-size:12px;background:transparent;border:none;padding:0;">${JSON.stringify(ev, null, 2)}</pre>
+        </div>`;
+    }).join("");
+  }
+
+  function renderSummary(data) {
+    const exitCode = data.exit_code ?? "?";
+    const signal = data.term_signal;
+    let status = "success";
+    let statusText = "Completed";
+    if (signal) { status = "blocked"; statusText = `Killed by signal ${signal}`; }
+    else if (exitCode !== 0) { status = "error"; statusText = `Exit code ${exitCode}`; }
+    $("summary").innerHTML = `
+      <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;">
+        <span class="status-badge status-${status}">${statusText}</span>
+        <div class="chip"><strong>Command:</strong> <code>${(data.command || []).join(" ")}</code></div>
+        <div class="chip"><strong>Duration:</strong> ${data.duration_s}s</div>
+        <div class="chip"><strong>Max RSS:</strong> ${data.max_rss_kb} KB</div>
+        <div class="chip"><strong>Mode:</strong> ${data.mode || ""}</div>
+      </div>`;
+    $("ids").innerHTML = `
+      <div style="display:flex;flex-wrap:wrap;gap:8px;">
+        <div class="chip"><strong>Sample ID:</strong> <code>${data.sample_id || ""}</code></div>
+        <div class="chip"><strong>Run ID:</strong> <code>${data.run_id || ""}</code></div>
+        <div class="chip"><strong>Artifact:</strong> <code>${data.stdout_artifact_id || ""}</code></div>
+        ${data.offline ? '<div class="chip" style="border-color: var(--warning);">⚠️ Offline mode</div>' : ''}
+      </div>`;
+  }
+
+  window.addEventListener("DOMContentLoaded", () => {
+    console.log("[ui] DOM ready");
 
     $("run").addEventListener("click", async () => {
       const body = buildRequestBody();
       body.cmd = $("cmd").value.trim();
+      if (!body.cmd) { alert("Enter a command to run"); return; }
       await runCommand(body);
     });
 
     $("uploadRun").addEventListener("click", async () => {
       const f = $("file").files[0];
       if (!f) { alert("Pick a file first"); return; }
-      
-      const fd = new FormData();
-      fd.append("file", f);
-      
-      const u = await fetch("/upload", {method: "POST", body: fd});
+      const fd = new FormData(); fd.append("file", f);
+      const u = await fetch("/upload", { method: "POST", body: fd });
       const uj = await u.json();
       if (uj.error) { alert(uj.error); return; }
-      
       const body = buildRequestBody();
       body.uploaded_path = uj.path;
       body.interpreter = $("interpreter").value;
       body.args = $("args").value;
-      
       await runCommand(body);
     });
-
-    function buildRequestBody() {
-      return {
-        mode: $("mode").value,
-        diagnose: $("diagnose").checked,
-        pidns: $("pidns").checked,
-        log_errno: $("log_errno").checked,
-        notify_exec: $("notify_exec").checked,
-        log_continue: $("log_continue").checked,
-        permissions: {
-          fs_read: $("perm_fs_read").checked,
-          fs_write: $("perm_fs_write").checked,
-          network: $("perm_network").checked,
-          exec: $("perm_exec").checked
-        }
-      };
-    }
-
-    function renderResults(data) {
-      $("resultsContainer").style.display = "block";
-      
-      // Render violations
-      renderViolations(data.alerts || []);
-      
-      // Render stdout
-      $("stdout").textContent = data.stdout || "(no output)";
-      
-      // Render all alerts
-      renderAlerts(data.alerts || []);
-      
-      // Render summary at bottom
-      renderSummary(data);
-    }
-
-    function renderViolations(alerts) {
-      const container = $("violations");
-      const violations = alerts.filter(a => 
-        a.type === "policy.alert" || 
-        a.reason === "trap" || 
-        a.reason === "errno" ||
-        (a.message && a.message.includes("killed by signal"))
-      );
-      
-      if (violations.length === 0) {
-        container.innerHTML = '<div class="alert-success">✅ No security violations detected</div>';
-        return;
-      }
-      
-      container.innerHTML = violations.map(v => {
-        const syscall = v.syscall || "unknown";
-        const reason = v.reason || "violation";
-        const time = (v.ts || "").split("T")[1]?.split(".")[0] || "";
-        
-        let details = [];
-        if (v.path) details.push(`Path: <code>${v.path}</code>`);
-        if (v.flags) details.push(`Flags: <code>${v.flags}</code>`);
-        if (v.domain) details.push(`Domain: <code>${v.domain}</code>`);
-        if (v.type && v.type !== "policy.alert") details.push(`Type: <code>${v.type}</code>`);
-        if (v.peer) details.push(`Peer: <code>${v.peer}</code>`);
-        if (v.port && v.port !== -1) details.push(`Port: <code>${v.port}</code>`);
-        if (v.denied) details.push(`Result: <code>${v.denied}</code>`);
-        
-        return `
-          <div class="violation-card">
-            <div class="violation-header">
-              <span class="violation-syscall">${syscall}</span>
-              <span class="violation-time">${time}</span>
-            </div>
-            <div class="violation-details">
-              <strong>Reason:</strong> ${reason}<br>
-              ${details.length > 0 ? details.join(" • ") : ""}
-            </div>
-          </div>
-        `;
-      }).join("");
-    }
-
-    function renderAlerts(alerts) {
-      const container = $("alerts");
-      
-      if (alerts.length === 0) {
-        container.innerHTML = '<div class="empty-state">No events recorded</div>';
-        return;
-      }
-      
-      container.innerHTML = alerts.map(ev => {
-        const type = ev.type || ev.reason || "event";
-        const time = (ev.ts || "").split("T")[1]?.split(".")[0] || "";
-        
-        let colorClass = "info";
-        if (type.includes("alert") || type.includes("trap")) colorClass = "danger";
-        else if (type.includes("spawn") || type.includes("exit")) colorClass = "warning";
-        
-        return `
-          <div class="alert-box alert-${colorClass}">
-            <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
-              <strong>${type}</strong>
-              <span style="font-size: 12px; opacity: 0.8;">${time}</span>
-            </div>
-            <pre style="margin: 0; font-size: 12px; background: transparent; border: none; padding: 0;">${JSON.stringify(ev, null, 2)}</pre>
-          </div>
-        `;
-      }).join("");
-    }
-
-    function renderSummary(data) {
-      const exitCode = data.exit_code ?? "?";
-      const signal = data.term_signal;
-      
-      let status = "success";
-      let statusText = "Completed";
-      if (signal) {
-        status = "blocked";
-        statusText = `Killed by signal ${signal}`;
-      } else if (exitCode !== 0) {
-        status = "error";
-        statusText = `Exit code ${exitCode}`;
-      }
-      
-      $("summary").innerHTML = `
-        <div style="display: flex; flex-wrap: wrap; gap: 8px; align-items: center;">
-          <span class="status-badge status-${status}">${statusText}</span>
-          <div class="chip"><strong>Command:</strong> <code>${(data.command || []).join(" ")}</code></div>
-          <div class="chip"><strong>Duration:</strong> ${data.duration_s}s</div>
-          <div class="chip"><strong>Max RSS:</strong> ${data.max_rss_kb} KB</div>
-          <div class="chip"><strong>Mode:</strong> ${data.mode}</div>
-        </div>
-      `;
-      
-      $("ids").innerHTML = `
-        <div style="display: flex; flex-wrap: wrap; gap: 8px;">
-          <div class="chip"><strong>Sample ID:</strong> <code>${data.sample_id}</code></div>
-          <div class="chip"><strong>Run ID:</strong> <code>${data.run_id}</code></div>
-          <div class="chip"><strong>Artifact:</strong> <code>${data.stdout_artifact_id}</code></div>
-          ${data.offline ? '<div class="chip" style="border-color: var(--warning);">⚠️ Offline mode</div>' : ''}
-        </div>
-        <div class="alert-box alert-info" style="margin-top: 12px;">
-          💡 <strong>Tip:</strong> Use the sample_id in your timeline UI to view detailed event correlation
-        </div>
-      `;
-    }
-  </script>
+  });
+})();
+</script>
 </body>
 </html>
