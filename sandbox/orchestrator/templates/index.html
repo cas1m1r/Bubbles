@@ -218,16 +218,20 @@
       container.innerHTML = '<div class="empty-state">No events recorded</div>';
       return;
     }
-	let colorClass = "info";
-	if (String(type).includes("alert") || String(type).includes("trap")) colorClass = "danger";
-	else if (type === "fs.drop") colorClass = "warning";
-	else if (String(type).includes("spawn") || String(type).includes("exit")) colorClass = "warning";
-    container.innerHTML = alerts.map(ev => {
+
+    container.innerHTML = (alerts || []).map(ev => {
       const type = ev.type || ev.reason || "event";
       const time = (ev.ts || "").split("T")[1]?.split(".")[0] || "";
+
       let colorClass = "info";
-      if (String(type).includes("alert") || String(type).includes("trap")) colorClass = "danger";
-      else if (String(type).includes("spawn") || String(type).includes("exit")) colorClass = "warning";
+      if (String(type).includes("alert") || String(type).includes("trap")) {
+        colorClass = "danger";
+      } else if (type === "fs.drop") {
+        colorClass = "warning";
+      } else if (String(type).includes("spawn") || String(type).includes("exit")) {
+        colorClass = "warning";
+      }
+
       return `
         <div class="alert-box alert-${colorClass}">
           <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
@@ -238,6 +242,7 @@
         </div>`;
     }).join("");
   }
+
 
   function renderSummary(data) {
 	  const exitCode = data.exit_code ?? "?";
