@@ -151,7 +151,7 @@ def spawn_and_observe(
     # Create sample/run up front so we can emit events immediately
     sample_id, run_id = create_sample_and_run(os.path.basename(filename) if filename else None)
     start_ts = now_iso()
-
+    
     emit_event(sample_id, run_id, {
         "type": "process.spawn",
         "action": "launcher.start",
@@ -180,6 +180,8 @@ def spawn_and_observe(
     t0 = time.time()
     proc = Popen(args, stdout=PIPE, stderr=PIPE, text=True, bufsize=1, cwd=run_cwd)
     alerts: list[dict] = []
+    files_dropped = []
+    initial_file_set = os.listdir(run_cwd)
     max_rss_kb = 0
     stdout_buf: list[str] = []
     stop = False
@@ -251,9 +253,12 @@ def spawn_and_observe(
     for t in threads:
         t.join(timeout=0.3)
     duration_s = time.time() - t0
-
+    # look for dropped files 
+    for file in os.listdir(run_cwd):
+        if file not in initial_file_set:
+            files_dropped.append(file)
     if timed_out:
-        ev = {"type": "sandbox.msg", "action": "timeout", "message": f"terminated after {timeout_s}s", "ts": now_iso()}
+        ev = {"type": "sandbox.msg", "action": "timeout", "message": f"terminated after {timeout_s}s", "ts": now_iso(), 'dropped_files': dropped_files}
         emit_event(sample_id, run_id, ev)
         alerts.append(ev)
 
