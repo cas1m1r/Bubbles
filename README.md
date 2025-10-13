@@ -1,163 +1,309 @@
-# Project Bubble - Seccomp Sandbox with Web UI
+# Project Bubble — Seccomp Sandbox with Web UI
 
-A lightweight sandboxing system using Linux seccomp-bpf with a Flask-based web interface for runtime analysis.
+A lightweight sandboxing system built on Linux **seccomp-bpf** with a **Flask** web interface for running programs, observing behavior, and capturing fine-grained policy events in real time.
 
-## ✨ Key Improvements
+- **Default behavior:** *Deny with `EPERM` and continue* (no TRAP). Disallowed operations are intercepted via **SECCOMP User Notification**, logged with rich context, and the target process continues execution whenever possible.
+- **UI-first workflow:** Run commands or uploaded binaries, toggle permissions (FS write, network), and review stdout, violations, and a full event stream.
 
-### 1. **Enhanced Violation Display**
-- Violations are now prominently displayed in a dedicated section at the top
-- Each violation shows:
-  - Syscall name (e.g., `openat`, `socket`)
-  - Reason (trap/errno)
-  - Detailed context (path, flags, domain, port, etc.)
-  - Timestamp
-- Color-coded violation cards for easy scanning
+---
 
-### 2. **Reorganized Layout**
-- Execution summary moved to the bottom
-- Violations displayed first (most important)
-- Two-column layout: Stdout | All Events
-- Clean, dark-themed modern UI
+## ✨ Highlights
 
-### 3. **Configurable Permissions**
-New permission checkboxes in the UI:
-- 📖 **Filesystem Read** - Allow reading files (default: ✓)
-- 📝 **Filesystem Write** - Allow creating/modifying files (default: ✗)
-- 🌐 **Network Access** - Allow socket operations (default: ✗)
-- ⚙️ **Process Execution** - Allow spawning processes (default: ✓)
-- 🔒 **PID Namespace** - Isolate process IDs
-- 🔍 **Diagnostic Mode** - Relaxed limits for debugging
+### 1) Clear violation display
+- Dedicated **Security Violations** section at the top.
+- Each card shows:
+  - syscall (e.g., `openat`, `socket`, `connect`)
+  - reason (`errno`), timestamp
+  - rich context (path, flags, domain, port, etc.)
+- Color-coded for fast triage.
 
-Additional options:
-- **Mode**: TRAP (kill on violation) vs ERRNO (return error, continue)
-- **Log filesystem operations** - Detailed FS event logging
-- **Log process spawns** - Track exec calls
-- **Continue on trap** - Don't kill, just log
+### 2) Modern, readable layout
+- Two columns for **Stdout** and **All Events**.
+- **Execution Summary** at the bottom (exit code, duration, memory).
+- Dark theme, compact spacing.
+
+### 3) Configurable permissions (UI toggles)
+- 📖 **Filesystem Read** — always allowed (checked & disabled)
+- 📝 **Filesystem Write** — allow/deny (default: deny)
+- 🌐 **Network Access** — allow/deny (default: deny)
+- ⚙️ **Log Process Spawns** — opt-in NOTIFY on `exec*`
+- 🔒 **PID Namespace**
+- 🔍 **Diagnostic logging** — ask kernel to log seccomp decisions (best effort)
+
+Additional behavior (always on):
+- **Deny with `EPERM` and continue** for disallowed FS/NET ops (via USER_NOTIF).
+- **Watchdog timeout** in the Flask orchestrator to prevent runaway jobs.
+
+---
 
 ## 📁 Project Structure
 
 ```
-Bubble/
+Bubbles/
 ├── sandbox/
-│   ├── seccomp_launcher.c    # Enhanced C launcher with permission flags
-│   ├── test_violations.c     # Test binary
+│   ├── seccomp_launcher.c      # C launcher: libseccomp + USER_NOTIF supervisor thread
+│   ├── test_violations.c       # Simple test program to exercise FS/NET
 │   ├── Makefile
-│   └── test.sh               # Comprehensive test suite
+│   └── test.sh                 # Local sanity tests (optional)
+│
 └── orchestrator/
-    ├── app.py                # Flask backend with permission support
+    ├── app.py                  # Flask server (runner, eventing, artifacts)
     ├── templates/
-    │   └── index.html        # Modern web UI
-    ├── uploads/              # Uploaded binaries
-    ├── artifacts/            # Execution artifacts (stdout)
-    └── offline/              # Offline event storage
+    │   └── index.html          # Web UI (single page)
+    ├── uploads/                # Uploaded executables (created at runtime)
+    ├── artifacts/              # Collected stdout (one file per run)
+    └── offline/                # NDJSON event sink when no backend is configured
 ```
+
+> If you placed `orchestrator/` at the repo root already, adjust the paths accordingly. The launcher path is read from `SANDBOX_LAUNCHER` or defaults to `../sandbox/seccomp_launcher` from `orchestrator/app.py`.
+
+---
 
 ## 🚀 Quick Start
 
-### 1. Build the Sandbox
+### 1) Build the sandbox launcher
+
+```bash
+sudo apt-get install -y build-essential libseccomp-dev   # Debian/Ubuntu
+# dnf/yum users: sudo dnf install libseccomp-devel
+
+cd sandbox
+make            # builds ./seccomp_launcher
+```
+
+### 2) (Optional) Run quick tests
 
 ```bash
 cd sandbox
-make
+./test.sh       # basic checks for FS/NET deny logging (optional)
 ```
 
-**Requirements:**
-- `libseccomp-dev` (Ubuntu/Debian) or `libseccomp-devel` (RHEL/Fedora)
-- GCC with pthread support
-
-### 2. Run Tests
-
-```bash
-cd sandbox
-./test.sh
-```
-
-This will run comprehensive tests showing:
-- Basic execution
-- Blocked file writes
-- Allowed file writes (with permission)
-- Network blocking/allowing
-- Process spawn notifications
-- Detailed violation logging
-
-### 3. Start the Web UI
+### 3) Start the Web UI
 
 ```bash
 cd orchestrator
+python3 -m pip install --upgrade pip
+python3 -m pip install flask requests
+# (optional) point to your launcher if the default path differs:
+# export SANDBOX_LAUNCHER=/absolute/path/to/seccomp_launcher
 python3 app.py
 ```
 
-Visit http://localhost:8090 in your browser.
+Open http://localhost:8090
 
-**Requirements:**
-- Python 3.8+
-- Flask: `pip3 install flask requests`
+---
 
-## 🎯 Usage Examples
+## 🧭 Web UI Workflow
 
-### Command Line
+1. **Set permissions**
+   - Check “Allow Filesystem Write” to permit writes.
+   - Check “Allow Network” to permit sockets/connect.
+   - “Log Process Spawns” enables optional visibility on `exec*` (we *continue* those syscalls; no blocking).
+   - “PID Namespace” isolates PIDs (optional).
+   - “Diagnostic logging” requests kernel-level seccomp logs (best-effort hint).
 
-```bash
-# Block file writes (default)
-./seccomp_launcher -- /bin/sh -c 'echo test > /tmp/blocked.txt'
+2. **Run**
+   - Enter a command such as `/usr/bin/echo hello` or `./test_violations`.
+   - Or **upload** a binary and click “Upload & Run” (optionally provide an interpreter and args).
 
-# Allow file writes
-./seccomp_launcher --allow-fs-write -- /bin/sh -c 'echo test > /tmp/allowed.txt'
-
-# Allow network operations
-./seccomp_launcher --allow-network -- curl example.com
-
-# Log mode (continue on violation)
-./seccomp_launcher --mode=errno --log-continue --log-errno -- ./test_violations
-
-# Full monitoring
-./seccomp_launcher --mode=errno --log-errno --notify-exec --log-continue -- your_program
-```
-
-### Web UI Workflow
-
-1. **Configure Permissions**
-   - Check boxes for allowed operations
-   - Select mode (TRAP kills on violation, ERRNO logs and continues)
-   - Enable logging options as needed
-
-2. **Run Command**
-   - Type command directly (e.g., `/bin/echo hello` or `./test_violations`)
-   - Or upload a binary and run it
-
-3. **Analyze Results**
-   - **Violations** section shows all blocked operations clearly
-   - **Stdout** shows program output + violation summary
-   - **All Events** shows complete JSON event stream
-   - **Execution Summary** at bottom shows exit status, duration, memory usage
+3. **Analyze**
+   - **Security Violations**: see any denied FS/NET activity with context.
+   - **Standard Output**: target program’s stdout (also saved as an artifact).
+   - **All Events**: raw JSON stream (spawn/exit, alerts, stderr fallbacks).
+   - **Execution Summary**: exit code, duration, max RSS, artifact IDs.
 
 4. **Iterate**
-   - Grant specific permissions (e.g., enable "Filesystem Write")
-   - Re-run to see how behavior changes
-   - Useful for understanding minimum required privileges
+   - Toggle permissions and re-run to learn the minimal privilege set.
 
-## 🔧 Command-Line Options
+---
 
-| Option | Description |
-|--------|-------------|
-| `--mode=trap` | Kill process on policy violation (default) |
-| `--mode=errno` | Return EPERM, continue execution |
-| `--allow-fs-write` | **NEW:** Allow filesystem modifications |
-| `--allow-network` | **NEW:** Allow socket/network operations |
-| `--log-errno` | Log filesystem operations via NOTIFY |
-| `--notify-exec` | Log process spawns (exec calls) |
-| `--log-continue` | Don't kill on TRAP, just log |
-| `--pidns` | Use PID namespace isolation |
-| `--diagnose` | Diagnostic mode (relaxed resource limits) |
+## 🖥️ Command-Line Usage (launcher)
 
-## 📊 Violation Types
+The current launcher supports explicit allow/deny switches for FS/NET, optional exec logging, PID namespaces, and diagnostic mode.
 
-The system detects and logs:
+```
+./seccomp_launcher [--pidns] [--deny-fs=1|0] [--deny-net=1|0] [--notify-exec] [--diagnose] -- <program> [args...]
+```
 
-### Filesystem Operations
-- **openat/open** - File opening with write/create flags
-- **unlinkat/unlink** - File deletion
-- **renameat2/rename** - File renaming
-- **mkdir/mkdirat** - Directory creation
-- **chmod/chown** - Permission/ownership changes
-- **trunc
+**Examples**
+
+```bash
+# Default (deny writes, deny network), allow reads
+./seccomp_launcher -- /bin/echo "hello world"
+
+# Allow file modifications
+./seccomp_launcher --deny-fs=0 -- /bin/sh -lc 'echo ok > /tmp/allowed.txt'
+
+# Allow networking (sockets/connect/etc.)
+./seccomp_launcher --deny-net=0 -- curl -s https://example.com
+
+# Log process spawns (execve/execveat) for visibility (continues, does not block)
+./seccomp_launcher --notify-exec -- /bin/echo hello
+
+# Combine: allow network, log spawns, keep FS writes denied
+./seccomp_launcher --deny-net=0 --notify-exec -- /bin/sh -lc 'curl -s https://example.com >/dev/null'
+```
+
+> The launcher *never* kills your process for policy reasons; it denies with `EPERM` and logs, letting the process continue where possible. The orchestrator may still terminate long-running jobs via a watchdog timeout (configurable in `app.py`).
+
+---
+
+## 📊 Event Model
+
+The orchestrator captures events from the launcher’s stderr (prefer JSON). Typical events:
+
+### Process spawn
+
+```json
+{
+  "type": "process.spawn",
+  "exe": "/usr/bin/echo",
+  "ts": "2025-10-12T23:44:10Z"
+}
+```
+
+With `--notify-exec`, you’ll also see an explicit `execve/execveat` record:
+```json
+{
+  "type": "process.spawn",
+  "syscall": "execve",
+  "pid": 4478,
+  "exe": "/usr/bin/echo",
+  "ts": "2025-10-13T03:37:39Z"
+}
+```
+
+### Filesystem deny (via USER_NOTIF → EPERM)
+
+```json
+{
+  "type": "policy.alert",
+  "reason": "errno",
+  "category": "fs",
+  "syscall": "openat",
+  "syscall_no": 257,
+  "ts": "2025-10-12T06:39:02Z",
+  "path": "/tmp/should_not_exist.txt",
+  "flags": "O_WRONLY|O_CREAT",
+  "mode": 420,
+  "denied": "EPERM"
+}
+```
+
+### Network deny (optional block set active)
+
+```json
+{
+  "type": "policy.alert",
+  "reason": "errno",
+  "category": "net",
+  "syscall": "connect",
+  "syscall_no": 42,
+  "ts": "2025-10-12T06:40:02Z",
+  "peer": "93.184.216.34",
+  "port": 443,
+  "family": 2,
+  "denied": "EPERM"
+}
+```
+
+### Process exit
+
+```json
+{
+  "type": "process.exit",
+  "action": "launcher.end",
+  "duration_ms": 104,
+  "notes": "exit=0 max_rss_kb=1676"
+}
+```
+
+> When no external backend is configured, events are also appended to `orchestrator/offline/*.ndjson`.
+
+---
+
+## ⚙️ Orchestrator (Flask) details
+
+- **Path to launcher:**  
+  Read from env `SANDBOX_LAUNCHER` or defaults to `../sandbox/seccomp_launcher` relative to `orchestrator/app.py`.
+- **Timeout:**  
+  A watchdog in `spawn_and_observe` caps wall time (default in code: `timeout_s=8`). Adjust if you need longer runs.
+- **Artifacts:**  
+  Stdout is saved as `orchestrator/artifacts/<run_id>.stdout.txt` and registered as an artifact in the JSON result.
+- **Optional backend ingestion:**  
+  If you set `BUBBLE_API`, events/runs/samples/artifacts are POSTed to that endpoint; otherwise they are stored under `offline/`.
+
+---
+
+## 🔧 Building blocks & design
+
+- **libseccomp** filter with **SCMP_ACT_ALLOW** baseline.
+- Targeted syscalls are marked **SCMP_ACT_NOTIFY** to route to a supervisor thread:
+  - FS mutations (open with write/create/trunc, `unlink*`, `rename*`, `chmod*`, etc.)
+  - (Optionally) NET operations (`socket`, `connect`, `sendto`, etc.) — if you want deny-with-telemetry mode
+  - Optional `exec*` visibility (`--notify-exec`) — allowed with `SECCOMP_USER_NOTIF_FLAG_CONTINUE`.
+- The supervisor logs rich context and responds with **`error = -EPERM`** (deny) or **continue** (for `exec*` when enabled).
+- **No TRAP mode** — the launcher never kills by policy; it denies with `EPERM` and logs, letting the process continue where possible.
+
+---
+
+## 🧪 Handy test recipes
+
+```bash
+# File write (denied by default)
+./seccomp_launcher -- /bin/sh -lc 'echo hi > /tmp/blocked.txt'
+
+# File write (allowed)
+./seccomp_launcher --deny-fs=0 -- /bin/sh -lc 'echo ok > /tmp/allowed.txt'
+
+# Network connect (denied by default)
+./seccomp_launcher -- /bin/sh -lc 'curl -s https://example.com || true'
+
+# Network connect (allowed)
+./seccomp_launcher --deny-net=0 -- /bin/sh -lc 'curl -s https://example.com >/dev/null'
+
+# Exec visibility
+./seccomp_launcher --notify-exec -- /bin/sh -lc '/usr/bin/echo hello'
+```
+
+---
+
+## 🩺 Troubleshooting
+
+- **“No output” or “timeout”**  
+  Increase the orchestrator timeout in `app.py` (`timeout_s` in `spawn_and_observe`). Long-running shells or downloads can exceed the default.
+- **`execvp`/`Bad address`**  
+  This occurs if an older build blocked `execve` via NOTIFY without continuing. Rebuild the latest launcher (the fix sets `SECCOMP_USER_NOTIF_FLAG_CONTINUE` for `exec*` when `--notify-exec` is on).
+- **UI shows events but stdout empty**  
+  Some programs buffer stdout when not attached to a TTY. Use `stdbuf -oL` or `-u` for Python, or write to stderr for immediate visibility.
+- **Network allowed but still failing**  
+  The sandbox only governs syscalls; DNS/proxy/firewall issues are out of scope. Test with `curl -v` and confirm connectivity outside the sandbox.
+
+---
+
+## 🔐 Security notes
+
+- This is a **user-space sandbox** demo intended for analysis and experimentation. It is not a drop-in container or a full VM boundary.
+- Filters are x86_64-specific in this implementation.
+- Always review and tailor syscall policies for your threat model before production usage.
+
+---
+
+## 📄 License
+
+MIT (or your preferred license). Add your LICENSE file at the repo root.
+
+---
+
+## 🙌 Credits
+
+- Linux **seccomp**, **libseccomp**, and **SECCOMP_USER_NOTIF**.
+- Flask for the UI and orchestration.
+
+---
+
+### Version compatibility
+
+- Kernel: Linux 5.x recommended (USER_NOTIF support required)
+- Compiler: GCC with pthread
+- Userspace: Python 3.8+, Flask ≥ 3.0
