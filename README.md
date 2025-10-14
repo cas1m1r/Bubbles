@@ -4,6 +4,8 @@ A lightweight sandboxing system built on Linux **seccomp-bpf** with a **Flask** 
 
 - **Default behavior:** *Deny with `EPERM` and continue* (no TRAP). Disallowed operations are intercepted via **SECCOMP User Notification**, logged with rich context, and the target process continues execution whenever possible.
 - **UI-first workflow:** Run commands or uploaded binaries, toggle permissions (FS write, network), and review stdout, violations, and a full event stream.
+![ui](https://raw.githubusercontent.com/cas1m1r/Bubbles/refs/heads/main/file_drop_ex2.png)
+
 ![ui](https://raw.githubusercontent.com/cas1m1r/Bubbles/refs/heads/main/file_drop_ex.png)
 ---
 
