@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Project Bubble — Orchestrator (recursive FS awareness)
 import os, json, shlex, time, threading, uuid, hashlib
 from datetime import datetime, timezone
 from subprocess import Popen, PIPE
@@ -50,7 +51,6 @@ def read_status_rss_kb(pid: int):
     except Exception:
         return None
 
-# ---------- offline event sink (if no API) ----------
 def _offline_append(kind: str, doc: dict):
     path = OFFLINE_DIR / f"{kind}.ndjson"
     with path.open("a", encoding="utf-8") as f:
@@ -134,6 +134,53 @@ def register_artifact(sample_id: str, run_id: str, p: Path, kind: str):
     })
     return artifact_id
 
+# ---------- FS indexing helpers (recursive, no symlinks) ----------
+def _safe_stat(p: Path):
+    try:
+        return p.stat(follow_symlinks=False)
+    except Exception:
+        return None
+
+def _sha256_small(p: Path, limit_bytes: int = 5 * 1024 * 1024):
+    st = _safe_stat(p)
+    if not st or not p.is_file() or (st.st_size is not None and st.st_size > limit_bytes):
+        return None
+    return sha256_hex(p)
+
+def _index_tree(root: Path, max_items: int = 20000):
+    """
+    Return (seen_set, meta) where paths are relative (unix style).
+    meta[path] = {"kind":"file"/"dir", "size":int?, "mtime_ns":int?}
+    """
+    root = root.resolve()
+    seen, meta = set(), {}
+    count = 0
+
+    for dirpath, _, filenames in os.walk(root, followlinks=False):
+        rel_dir = os.path.relpath(dirpath, root).replace("\\", "/")
+        if rel_dir != ".":
+            seen.add(rel_dir)
+            meta[rel_dir] = {"kind": "dir"}
+            count += 1
+            if count >= max_items: break
+
+        for fn in filenames:
+            rel = (fn if rel_dir == "." else f"{rel_dir}/{fn}")
+            p = Path(dirpath) / fn
+            st = _safe_stat(p)
+            seen.add(rel)
+            meta[rel] = {
+                "kind": "file",
+                "size": (st.st_size if st else None),
+                "mtime_ns": (st.st_mtime_ns if st else None),
+            }
+            count += 1
+            if count >= max_items: break
+        if count >= max_items: break
+
+    return seen, meta
+
+
 # ---------- core runner ----------
 def spawn_and_observe(
     cmd_argv,
@@ -146,7 +193,6 @@ def spawn_and_observe(
 ):
     # Resolve CWD / metadata
     run_cwd = str(cwd) if cwd else None
-    
     filename = cmd_argv[0] if cmd_argv else None
 
     # Create sample/run up front so we can emit events immediately
@@ -186,12 +232,16 @@ def spawn_and_observe(
     stop = False
     timed_out = False
 
-    # NEW: snapshot cwd (robust even if cwd=None)
-    cwd_path = Path(run_cwd or os.getcwd())
+    # Working directory (recursive baseline)
+    cwd_path = Path(run_cwd or os.getcwd()).resolve()
     try:
-        initial_file_set = set(os.listdir(cwd_path))
+        baseline_set, baseline_meta = _index_tree(cwd_path)
     except Exception:
-        initial_file_set = set()
+        baseline_set, baseline_meta = set(), {}
+
+    # live-created paths we’ll aggregate & summarize at the end
+    created_paths: list[str] = []
+    created_meta: dict[str, dict] = {}
 
     def read_status_rss_kb_local(pid):
         try:
@@ -252,11 +302,45 @@ def spawn_and_observe(
                     break
             time.sleep(0.1)
 
+    # recursive FS watcher (polling)
+    def watcher_fs():
+        scan_interval = 0.25  # seconds
+        seen = set(baseline_set)
+        while not stop and proc.poll() is None:
+            try:
+                cur_set, cur_meta = _index_tree(cwd_path)
+                new_paths = cur_set - seen
+                if new_paths:
+                    for rel in sorted(new_paths):
+                        info = cur_meta.get(rel, {})
+                        kind = info.get("kind", "file")
+                        p = (cwd_path / rel).resolve()
+                        ev = {
+                            "type": f"fs.create.{kind}",
+                            "cwd": str(cwd_path),
+                            "path": rel,
+                            "abs_path": str(p),
+                            "size": info.get("size"),
+                            "sha256": _sha256_small(p) if kind == "file" else None,
+                            "ts": now_iso(),
+                        }
+                        emit_event(sample_id, run_id, ev)
+                        alerts.append(ev)
+
+                        # remember for final summary
+                        created_paths.append(rel)
+                        created_meta[rel] = info
+                    seen |= new_paths
+            except Exception:
+                pass
+            time.sleep(scan_interval)
+
     threads = [
         threading.Thread(target=sampler, daemon=True),
         threading.Thread(target=read_stdout, daemon=True),
         threading.Thread(target=read_stderr, daemon=True),
         threading.Thread(target=watchdog, daemon=True),
+        threading.Thread(target=watcher_fs, daemon=True),
     ]
     [t.start() for t in threads]
 
@@ -264,38 +348,99 @@ def spawn_and_observe(
     stop = True
     for t in threads:
         t.join(timeout=0.3)
-    duration_s = time.time() - t0
+        duration_s = time.time() - t0
 
-    # ---------- NEW: detect dropped files with metadata ----------
+    # ---------- unconditional post-run scan: created + modified ----------
     dropped_files = []
+    modified_files = []
+
     try:
-        final_set = set(os.listdir(cwd_path))
-        new_files = sorted(final_set - initial_file_set)
-        for name in new_files:
-            p = cwd_path / name
+        end_set, end_meta = _index_tree(cwd_path)
+
+        # Created = anything now present that wasn't in baseline
+        created_paths = sorted(end_set - baseline_set)
+
+        for rel in created_paths:
+            p = cwd_path / rel
             try:
                 if p.is_file():
+                    st = _safe_stat(p)
                     dropped_files.append({
-                        "name": name,
-                        "size": p.stat().st_size,
-                        "sha256": sha256_hex(p),
+                        "name": rel,
+                        "kind": "file",
+                        "size": st.st_size if st else None,
+                        "sha256": sha256_hex(p) if st and st.st_size is not None else None,
+                    })
+                elif p.is_dir():
+                    # summarize dir contents
+                    size_total = 0
+                    file_count = 0
+                    for rp, _, files in os.walk(p, followlinks=False):
+                        for fn in files:
+                            fp = Path(rp) / fn
+                            stf = _safe_stat(fp)
+                            if stf:
+                                size_total += stf.st_size
+                                file_count += 1
+                    dropped_files.append({
+                        "name": rel,
+                        "kind": "dir",
+                        "size": size_total,
+                        "file_count": file_count
                     })
             except Exception:
-                # best-effort; skip unreadable files
                 pass
+
+        # Modified = present in both snapshots but size or mtime changed (files only)
+        common_paths = end_set & baseline_set
+        for rel in common_paths:
+            m0 = baseline_meta.get(rel)
+            m1 = end_meta.get(rel)
+            if not m0 or not m1:
+                continue
+            if m0.get("kind") != "file" or m1.get("kind") != "file":
+                continue
+            if (m0.get("size") != m1.get("size")) or (m0.get("mtime_ns") != m1.get("mtime_ns")):
+                p = cwd_path / rel
+                st = _safe_stat(p)
+                ev = {
+                    "type": "fs.modify.file",
+                    "cwd": str(cwd_path),
+                    "path": rel,
+                    "size_before": m0.get("size"),
+                    "size_after": m1.get("size"),
+                    "mtime_before_ns": m0.get("mtime_ns"),
+                    "mtime_after_ns": m1.get("mtime_ns"),
+                    "sha256": _sha256_small(p),
+                    "ts": now_iso(),
+                }
+                emit_event(sample_id, run_id, ev)
+                alerts.append(ev)
+                modified_files.append({
+                    "name": rel,
+                    "kind": "file",
+                    "size_before": m0.get("size"),
+                    "size_after": m1.get("size"),
+                    "mtime_before_ns": m0.get("mtime_ns"),
+                    "mtime_after_ns": m1.get("mtime_ns"),
+                })
     except Exception:
+        # keep going; summary just won't include FS changes
         pass
 
-    if dropped_files:
+    # Single summary event
+    if dropped_files or modified_files:
         ev = {
             "type": "fs.drop",
             "cwd": str(cwd_path),
             "count": len(dropped_files),
             "files": dropped_files,
+            "modified": modified_files,
             "ts": now_iso(),
         }
         emit_event(sample_id, run_id, ev)
         alerts.append(ev)
+
 
     if timed_out:
         ev = {
@@ -341,10 +486,8 @@ def spawn_and_observe(
         "stdout_artifact_id": art_id,
         "offline": (not BUBBLE_API),
         "mode": "deny-with-EPERM-continue",
-        # NEW: bubble up to the UI
         "dropped_files": dropped_files,
     }
-
 
 # ---------- routes ----------
 @app.get("/")
