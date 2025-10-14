@@ -8,6 +8,9 @@ A lightweight sandboxing system built on Linux **seccomp-bpf** with a **Flask** 
 
 ![ui](https://raw.githubusercontent.com/cas1m1r/Bubbles/refs/heads/main/file_drop_ex.png)
 ---
+## NOTE: 
+**This repository is NOT a fully finished and secure sandbox.** 
+*It is my personal attempt to start building one though. Please use it responsibly, do not just drop unknown malware in and expect it to be perfectly contained. This project is under active development and will be seeing frequeunt pushes. Please do not use this in any production setting without testing for yourself that the conditions you care about are covered. If this becomes stable enough for wider use I will state that and provide the test suite used to reach that conclusion so again anyone can be sure what they believe is being protected is actually protected.*
 
 ## ✨ Highlights
 
