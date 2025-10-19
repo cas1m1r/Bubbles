@@ -8,6 +8,9 @@ A lightweight sandboxing system built on Linux **seccomp-bpf** with a **Flask** 
 
 ![ui](https://raw.githubusercontent.com/cas1m1r/Bubbles/refs/heads/main/file_drop_ex.png)
 ---
+## NOTE: 
+**This repository is NOT a fully finished and secure sandbox.** 
+*It is my personal attempt to start building one though. Please use it responsibly, do not just drop unknown malware in and expect it to be perfectly contained. This project is under active development and will be seeing frequeunt pushes. Please do not use this in any production setting without testing for yourself that the conditions you care about are covered. If this becomes stable enough for wider use I will state that and provide the test suite used to reach that conclusion so again anyone can be sure what they believe is being protected is actually protected.*
 
 ## ✨ Highlights
 
@@ -293,7 +296,12 @@ With `--notify-exec`, you’ll also see an explicit `execve/execveat` record:
 
 ## 📄 License
 
-MIT (or your preferred license). Add your LICENSE file at the repo root.
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the “Software”), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
 
 ---
 
