@@ -176,7 +176,8 @@ static void log_connect(int scno, pid_t tpid, const void *saptr, socklen_t slen)
          scno, ts, peer, port, fam);
 }
 
-/* ---------- supervisor thread ---------- */
+/* --- replace original supervisor_thread's core loop with this forwarding variant --- */
+
 static void *supervisor_thread(void *arg) {
     int nfd = (int)(intptr_t)arg; g_notify_fd = nfd;
 
@@ -184,13 +185,125 @@ static void *supervisor_thread(void *arg) {
     struct seccomp_notif_resp *resp = NULL;
     if (seccomp_notify_alloc(&req, &resp) != 0) return NULL;
 
+    /* check for external supervisor socket FD via env var */
+    int sup_fd = -1;
+    const char *supfd_env = getenv("SUPERVISOR_JSON_FD");
+    if (supfd_env) {
+        sup_fd = atoi(supfd_env);
+        if (sup_fd < 0) sup_fd = -1;
+    }
+
     for (;;) {
         if (seccomp_notify_receive(nfd, req) != 0) break;
 
         int scno = req->data.nr;
         pid_t tpid = req->pid;
 
-        /* exec: log & ALLOW when requested */
+        /* Fast path: if there's an external supervisor socket, forward a compact JSON and wait */
+        if (sup_fd >= 0) {
+            char outbuf[2048];
+            char inbuf[512];
+            int outlen = 0;
+
+            /* Build a small JSON describing the syscall */
+            const char *sname = sys_name(scno);
+            /* default fields */
+            snprintf(outbuf, sizeof(outbuf),
+                "{\"type\":\"notify\",\"syscall\":\"%s\",\"syscall_no\":%d,\"pid\":%d",
+                sname, scno, tpid);
+            outlen = strlen(outbuf);
+
+            /* add syscall-specific fields we can read (best-effort) */
+            if (scno == __NR_openat || scno == __NR_open) {
+                char path[256] = {0};
+                const void *pathptr = (scno == __NR_openat) ? (const void *)req->data.args[1] : (const void *)req->data.args[0];
+                read_remote_string(tpid, pathptr, path, sizeof(path));
+                int flags = (int)((scno == __NR_openat) ? req->data.args[2] : req->data.args[1]);
+                int mode  = (int)((scno == __NR_openat) ? req->data.args[3] : req->data.args[2]);
+                outlen += snprintf(outbuf + outlen, sizeof(outbuf)-outlen,
+                    ",\"path\":\"%s\",\"flags\":%d,\"mode\":%d", path, flags, mode);
+            } else if (scno == __NR_connect) {
+                /* read sockaddr from remote process memory (best-effort) */
+                char peer[128] = {0};
+                int port = -1;
+                log_connect(scno, tpid, (const void*)req->data.args[1], (socklen_t)req->data.args[2]);
+                /* note: we already logged; now attempt to extract ip/port */
+                unsigned char buf[128]; size_t n = (size_t)req->data.args[2];
+                if (n > sizeof(buf)) n = sizeof(buf);
+                if (req->data.args[1] && read_remote(tpid, (const void*)req->data.args[1], buf, n) == (ssize_t)n) {
+                    const struct sockaddr *sa = (const struct sockaddr*)buf;
+                    if (sa->sa_family == AF_INET && n >= sizeof(struct sockaddr_in)) {
+                        const struct sockaddr_in *in = (const struct sockaddr_in*)sa;
+                        inet_ntop(AF_INET, &in->sin_addr, peer, sizeof(peer));
+                        port = ntohs(in->sin_port);
+                    }
+                }
+                outlen += snprintf(outbuf + outlen, sizeof(outbuf)-outlen,
+                    ",\"peer\":\"%s\",\"port\":%d", peer[0]?peer:"<unk>", port);
+            } else if (scno == __NR_unlinkat) {
+                char path[256] = {0};
+                read_remote_string(tpid, (const void*)req->data.args[1], path, sizeof(path));
+                outlen += snprintf(outbuf + outlen, sizeof(outbuf)-outlen, ",\"path\":\"%s\"", path);
+            }
+
+            /* close JSON */
+            outlen += snprintf(outbuf + outlen, sizeof(outbuf)-outlen, "}\n");
+
+            /* send to orchestrator; block until write completes */
+            ssize_t w = write(sup_fd, outbuf, outlen);
+            if (w <= 0) {
+                /* fallback: deny to be safe */
+                resp->id = req->id; resp->error = -EPERM; resp->val = 0; resp->flags = 0;
+                seccomp_notify_respond(nfd, resp);
+                continue;
+            }
+
+            /* read one-line JSON reply from orchestrator */
+            ssize_t r = read(sup_fd, inbuf, sizeof(inbuf)-1);
+            if (r <= 0) {
+                resp->id = req->id; resp->error = -EPERM; resp->val = 0; resp->flags = 0;
+                seccomp_notify_respond(nfd, resp);
+                continue;
+            }
+            inbuf[r] = '\0';
+            /* crude parsing: look for action keys */
+            if (strstr(inbuf, "\"action\":\"ALLOW\"") || strstr(inbuf, "\"action\": \"ALLOW\"")) {
+                resp->id = req->id; resp->error = 0; resp->val = 0; resp->flags = SECCOMP_USER_NOTIF_FLAG_CONTINUE;
+                seccomp_notify_respond(nfd, resp);
+                continue;
+            } else if (strstr(inbuf, "\"action\":\"DENY_ERRNO\"") || strstr(inbuf, "\"action\": \"DENY_ERRNO\"")) {
+                /* parse errno if present */
+                int err = EPERM;
+                char *p = strstr(inbuf, "\"errno\":");
+                if (p) err = atoi(p + 8);
+                resp->id = req->id; resp->error = -err; resp->val = 0; resp->flags = 0;
+                seccomp_notify_respond(nfd, resp);
+                continue;
+            } else if (strstr(inbuf, "\"action\":\"EMULATE_RET\"") || strstr(inbuf, "\"action\": \"EMULATE_RET\"")) {
+                /* parse ret value */
+                int retv = 0;
+                char *p = strstr(inbuf, "\"ret\":");
+                if (p) retv = atoi(p + 6);
+                resp->id = req->id; resp->error = 0; resp->val = retv; resp->flags = 0;
+                seccomp_notify_respond(nfd, resp);
+                continue;
+            } else if (strstr(inbuf, "\"action\":\"QUARANTINE\"") || strstr(inbuf, "\"action\": \"QUARANTINE\"")) {
+                resp->id = req->id; resp->error = -EPERM; resp->val = 0; resp->flags = 0;
+                seccomp_notify_respond(nfd, resp);
+                /* optionally log quarantine locally */
+                char ts[64]; timestr(ts);
+                jlog("{\"type\":\"policy.alert\",\"reason\":\"quarantine\",\"syscall\":\"%s\",\"syscall_no\":%d,\"pid\":%d,\"ts\":\"%s\"}",
+                     sname, scno, tpid, ts);
+                continue;
+            } else {
+                /* unknown reply => safe deny */
+                resp->id = req->id; resp->error = -EPERM; resp->val = 0; resp->flags = 0;
+                seccomp_notify_respond(nfd, resp);
+                continue;
+            }
+        } /* end sup_fd >= 0 */
+
+        /* --- fallback: original internal policy (unchanged) --- */
         if (g_notify_exec && (scno == __NR_execve || scno == __NR_execveat)) {
             char path[256]={0}; char ts[64];
             const void *p = (const void *)(req->data.args[0]); // pathname
@@ -199,11 +312,11 @@ static void *supervisor_thread(void *arg) {
             jlog("{\"type\":\"process.spawn\",\"syscall\":\"%s\",\"pid\":%d,\"exe\":\"%s\",\"ts\":\"%s\"}",
                 sys_name(scno), tpid, path[0]?path:"<unknown>", ts);
             resp->id = req->id;
-			resp->val = 0;
-			resp->error = 0;
-			resp->flags = SECCOMP_USER_NOTIF_FLAG_CONTINUE;  // <-- let kernel actually do execve
-			(void)seccomp_notify_respond(nfd, resp);
-			continue;
+            resp->val = 0;
+            resp->error = 0;
+            resp->flags = SECCOMP_USER_NOTIF_FLAG_CONTINUE;
+            (void)seccomp_notify_respond(nfd, resp);
+            continue;
         }
 
         /* FS denials (log, then EPERM) */
@@ -250,7 +363,6 @@ static void *supervisor_thread(void *arg) {
             }
         }
 
-        /* default: deny anything that reached NOTIFY */
 deny:
         resp->id = req->id; resp->error = -EPERM; resp->val = 0; resp->flags = 0;
         if (seccomp_notify_respond(nfd, resp) != 0) break;
