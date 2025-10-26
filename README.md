@@ -48,8 +48,9 @@ Bubbles/
 ├── sandbox/
 │   ├── seccomp_launcher.c      # C launcher: libseccomp + USER_NOTIF supervisor thread
 │   ├── test_violations.c       # Simple test program to exercise FS/NET
-│   ├── Makefile
-│   └── test.sh                 # Local sanity tests (optional)
+│   └── Makefile
+│
+└────── setup.sh 
 │
 └── orchestrator/
     ├── app.py                  # Flask server (runner, eventing, artifacts)
@@ -72,15 +73,7 @@ Bubbles/
 sudo apt-get install -y build-essential libseccomp-dev   # Debian/Ubuntu
 # dnf/yum users: sudo dnf install libseccomp-devel
 
-cd sandbox
-make            # builds ./seccomp_launcher
-```
-
-### 2) (Optional) Run quick tests
-
-```bash
-cd sandbox
-./test.sh       # basic checks for FS/NET deny logging (optional)
+cd ./setup.sh # builds ./seccomp_launcher
 ```
 
 ### 3) Start the Web UI
